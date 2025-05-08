@@ -1,0 +1,61 @@
+name: Listar repos de un miembro
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_user:
+        description: 'Usuario a auditar (ej: pepito)'
+        required: true
+        type: string
+
+jobs:
+  audit-user:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Comprobar permisos de administración
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.ORGANIZATION_ACCESS_TOKEN }}
+          script: |
+            // Obtener organización automáticamente
+            const org = context.repo.owner; // github.repository_owner
+            const targetUser = "${{ github.event.inputs.target_user }}".toLowerCase();
+            let found = false;
+
+            const repos = await github.paginate(github.rest.repos.listForOrg, {
+              org: org,
+              per_page: 100,
+            });
+
+            let output = `##[group]🔍 Auditoría de permisos para @${targetUser} en ${org}\n`;
+            
+            for (const repo of repos) {
+              const collaborators = await github.paginate(
+                github.rest.repos.listCollaborators, 
+                {
+                  owner: org,
+                  repo: repo.name,
+                  affiliation: 'direct',
+                  per_page: 100,
+                }
+              );
+
+              const isAdmin = collaborators.some(
+                c => c.login.toLowerCase() === targetUser && c.permissions.admin
+              );
+
+              if (isAdmin) {
+                found = true;
+                output += `### ${repo.name}\n`;
+                output += `🔗 Enlace: ${repo.html_url}\n`;
+                output += `📅 Creado: ${new Date(repo.created_at).toLocaleDateString('es-ES')}\n\n`;
+              }
+            }
+
+            output += found 
+              ? "##[endgroup]" 
+              : "❌ No se encontraron repositorios con acceso de admin.\n##[endgroup]";
+
+            console.log(output);
