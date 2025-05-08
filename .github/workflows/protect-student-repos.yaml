@@ -1,0 +1,60 @@
+name: Comprobar datos de repositorio
+
+on:
+  repository:
+    types: [created]
+
+jobs:
+  capture-event:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Para subir el JSON
+      issues: read     # Opcional, si necesitas más datos
+
+    steps:
+      - name: Checkout del repositorio .github
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.organization }}/.github
+          path: .github-repo
+
+      - name: Obtener datos del repositorio y colaboradores
+        id: get-repo-data
+        env:
+          REPO_NAME: ${{ github.event.repository.name }}
+          ORG: ${{ github.event.organization.login }}
+          GITHUB_TOKEN: ${{ secrets.ORGANIZATION_ACCESS_TOKEN }}  # O usa un PAT con más permisos
+        run: |
+          # Datos completos del repositorio
+          curl -s \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$ORG/$REPO_NAME" > repo_details.json
+
+          # Colaboradores externos
+          curl -s \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$ORG/$REPO_NAME/collaborators?affiliation=outside" > collaborators.json
+
+          # Combina todo en un único JSON
+          jq -n \
+            --argjson event "${{ toJSON(github.event) }}" \
+            --argjson repoDetails "$(cat repo_details.json)" \
+            --argjson collaborators "$(cat collaborators.json)" \
+            '{ event: $event, repoDetails: $repoDetails, collaborators: $collaborators }' > combined_data.json
+
+      - name: Guardar JSON en el repositorio .github
+        run: |
+          FILE_NAME=".github-repo/created-repos/${{ github.event.repository.name }}.json"
+          mkdir -p $(dirname "$FILE_NAME")
+          mv combined_data.json "$FILE_NAME"
+
+      - name: Subir cambios
+        working-directory: .github-repo
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add .
+          git commit -m "Add data for ${{ github.event.repository.name }}"
+          git push
